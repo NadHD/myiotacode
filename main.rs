@@ -1,22 +1,20 @@
-use iota_streams::app_channels::api::tangle::Author;
+use iota::client as iota_client;
 
-mod my_api;
-use crate::my_api::announce::start_a_new_channel;
-use crate::my_api::send_message::send_signed_message;
-
-use iota_streams::app::{
-    transport::tangle::{
-        PAYLOAD_BYTES,
-        client:: {
-            Client,
-            SendTrytesOptions
-        }
+use iota_streams::app_channels::api::tangle::{
+    Address, Transport, Subscriber
+};
+use iota_streams::app::transport::tangle::{
+    PAYLOAD_BYTES,
+    client::{
+        Client,
+        SendTrytesOptions
     }
 };
 
-use iota::client as iota_client;
+use anyhow::{Result, bail};
+use std::env;
 
-fn main(){
+fn main() {
     let mut send_opt = SendTrytesOptions::default();
     send_opt.min_weight_magnitude = 9;
     send_opt.local_pow = false;
@@ -25,27 +23,69 @@ fn main(){
 
     let client: Client = Client::new(send_opt, iota_client::ClientBuilder::new().node(url).unwrap().build().unwrap());
     let encoding = "utf-8";
-    let multi_branching_flag = true;
-    let mut author = Author::new("TESTPROVAPROVATEST7", encoding, PAYLOAD_BYTES, multi_branching_flag, client);
-    let channel_address = author.channel_address().unwrap().to_string();
-    println!("TEST: channel_address = {}", &channel_address);
-    let announce_message = start_a_new_channel(&mut author).unwrap();
-    let announce_msgid = announce_message.msgid.to_string();
-    println!("TEST: announce_message = {}", &announce_message.to_string());
-    println!("TEST : announce_msgid = {}", &announce_msgid);
-    let public_payload = "SONOIOSTOTESTANDO";
-    let signed_message = send_signed_message(&mut author, &channel_address, &announce_msgid, &public_payload.to_string()).unwrap();
+    let mut subscriber = Subscriber::new("PROVAPROVAPROVAPROVA", encoding, PAYLOAD_BYTES, client);
+
+    let args: Vec<String> = env::args().collect();
+    let mut i = 0;
+
+    for element in &args {
+        println!("TEST: Element {} = {}", i, element);
+        i = i + 1;
+    }
+
+    let channel_address = &args[1];
+    println!("TEST: channel_address = {}", channel_address.to_string());
+    let announce_message_identifier = &args[2];
+    println!("TEST: announce_message_identifier = {}", announce_message_identifier.to_string());
+    let signed_message_identifier = &args[3];
+    println!("TEST: signed_message_identifier = {}", signed_message_identifier.to_string());
+
+    match get_announcement(&mut subscriber, &channel_address.to_string(), &announce_message_identifier.to_string()){
+        Ok(()) => (),
+        Err(error) => println!("Failed with error {}", error),
+    }
     
-    println!("");
-    println!("Now, in a new terminal window, use the subscriber to publish a `Subscribe` message on the channel");
-    println!("");
-    println!("cargo run {} {} {}", 
-        channel_address, 
-        announce_msgid, 
-        signed_message.msgid
-    );
-    println!("");
-    println!("Tangle Address/channel: {}", iota_client::bytes_to_trytes(author.channel_address().unwrap().as_ref()));
-    println!("Tangle announce_message tag: {}", iota_client::bytes_to_trytes(announce_message.msgid.as_ref()));
-    println!("Tangle signed_message tag: {}", iota_client::bytes_to_trytes(signed_message.msgid.as_ref()));
+    match get_signed_messages(&mut subscriber, &channel_address.to_string(), &signed_message_identifier.to_string()){
+        Ok(()) => (),
+        Err(error) => println!("Failed with error {}", error),
+    }
+}
+
+//Changing the addres and identifier into a link
+fn create_message_link(channel_address: &String, message_identifier: &String) -> Result<Address> {
+    let message_link = match Address::from_str(&channel_address, &message_identifier) {
+        Ok(message_link) => message_link,
+        Err(()) => bail!("Failed to create Address from {}:{}", &channel_address, &message_identifier),
+    };
+    Ok(message_link)
+}
+
+fn get_announcement<T: Transport>(subscriber: &mut Subscriber<T>, channel_address: &String, announce_message_identifier: &String) -> Result<()>{
+    let announcement_link = match create_message_link(&channel_address, &announce_message_identifier){
+        Ok(announcement_link) => announcement_link,
+        Err(error) => bail!(error),
+    };
+
+    //Printing the Announce message
+    println!("Receiving announcement message");
+    println!("TEST: announcement_link = {}", announcement_link);
+    subscriber.receive_announcement(&announcement_link)?;
+    println!("TEST ho ricevuto il messaggio");
+
+    Ok(())
+}
+
+fn get_signed_messages<T: Transport>(subscriber: &mut Subscriber<T>, channel_address: &String, signed_message_identifier: &String) -> Result<()> {
+    // Convert the channel address and message identifier to a link
+    let message_link = match create_message_link(&channel_address, &signed_message_identifier){
+        Ok(message_link) => message_link,
+        Err(error) => bail!(error),
+    };
+
+    // First returned value is the senders public key. We wont be using that in this tutorial
+    let (_, public_payload, masked_payload) = subscriber.receive_signed_packet(&message_link)?;
+    println!("Found and verified message");
+    println!("Public message: {:?}, private message: {:?}", 
+        String::from_utf8(public_payload.0), String::from_utf8(masked_payload.0));
+    Ok(())
 }
